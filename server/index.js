@@ -32,11 +32,11 @@ async function askOpenAI(prompt) {
         body: JSON.stringify({
             model: 'gpt-3.5-turbo',
             messages: [
-                { role: 'system', content: 'You are a helpful assistant.' },
+                { role: 'system', content: 'You are an unbiased news editor.' },
                 { role: 'user', content: prompt }
             ],
             max_tokens: 1000,
-            temperature: 0.7
+            temperature: 0.2
         })
     });
 
@@ -53,10 +53,10 @@ async function askOpenAI(prompt) {
     return clean;
 }
 
-// GET /api/predict?q=some+question
-// This endpoint fetches news articles and predicts outcomes based on them
-// Example: /api/predict?q=stock+market
-app.get('/api/predict', async (req, res) => {
+// GET /api/neutral?q=some+question
+// This endpoint fetches news articles and gets the most neutral ones
+// Example: /api/neutral?q=stock+market
+app.get('/api/neutral', async (req, res) => {
     try {
         const q = req.query.q;
 
@@ -68,36 +68,49 @@ app.get('/api/predict', async (req, res) => {
         // Fetch news articles related to the query
         const newsUrl = `https://newsapi.org/v2/everything?` +
                     `q=${encodeURIComponent(q)}` +
-                    `&pageSize=20&sortBy=publishedAt&apiKey=${NEWS_KEY}`;
+                    `&pageSize=20&sortBy=publishedAt&language=en&apiKey=${NEWS_KEY}`;
         const newsRes = await fetch(newsUrl);
         const newsJ = await newsRes.json();
 
-        // Format headlines for OpenAI input
-        const snippets = (newsJ.articles || [])
-            .map(a => `${a.title} — ${a.description || ''}`)
-            .join('\n');
-        
-        // Create prompt for OpenAI
-        const prompt = `Given the news snippets below about "${q}",
-        estimate probabilities (that sum to 1) for the most likely outcomes.
-        Return ONLY valid JSON: an array of {"outcome": string, "probability": 0–1} objects.
-        News Snippets: ${snippets}`;
-
-        const reply = await askOpenAI(prompt);
-
-        // Parse the response as a JSON
-        let data;
-        try {
-            data = JSON.parse(reply);
-        } catch (e) {
-            return res.status(500).json({ error: 'Failed to parse OpenAI response.' });
-        }
-
-        res.json(data);
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ error: 'Internal server error.' });
+    if (!Array.isArray(newsJ.articles) || newsJ.articles.length === 0) {
+      return res.status(404).json({ error: 'No articles found.' });
     }
+
+    // Build a numbered list for the prompt
+    const listText = newsJ.articles
+      .map((a, i) => `Article ${i+1}:\nTitle: ${a.title}\nDesc: ${a.description||''}\nURL: ${a.url}`)
+      .join('\n\n');
+
+    // Ask OpenAI to pick & neutralize
+    const prompt = `Here are some news articles about "${q}". Each has a title, description, and URL: ${listText}
+
+    1) Rate each article for bias on 0 (neutral) to 1 (very biased).  
+    2) Identify the article with the lowest bias score.  
+    3) Rewrite that least-biased article's key details in a neutral, emotion-free style.
+
+    Return ONLY valid JSON exactly like:
+    {
+        "title": string,
+        "url":   string,
+        "neutral_summary": string
+    }
+        `;
+
+    const reply = await askOpenAI(prompt);
+
+    // Parse & return
+    let output;
+    try {
+      output = JSON.parse(reply);
+    } catch (err) {
+      return res.status(500).json({ error: 'Failed to parse AI response.', raw: reply });
+    }
+
+    res.json(output);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
 });
 
 const PORT = process.env.PORT || 4000;
