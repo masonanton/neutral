@@ -84,21 +84,32 @@ app.get('/api/neutral', async (req, res) => {
     URL: ${a.url}`)
       .join('\n\n');
 
-    const prompt = `Here are news articles about "${q}":${listText}
+    const prompt = `
+    You are a bias detection model evaluating the following news articles about "${q}".
 
-    1) Rate each article for bias on a scale from 0 (completely neutral) to 1 (very biased).
-    2) Identify the THREE articles with the lowest bias scores.
-    3) Return ONLY valid JSON: an array of exactly 3 objects with keys:
-        - "title": string
-        - "url": string
-        - "bias_score": number (0–1)
+    For each article, assign a "bias_score" between 0.01 and 0.99.
+    DO NOT use 0 or 1.
+    DO NOT round to 0.0, 0.1, 0.2, etc.
+    USE non-rounded decimal values like 0.13, 0.42, 0.58, etc.
+    Every score must have at least **two decimal places**.
 
-    Example:
+    Return ONLY the three articles with the **lowest bias_score**.
+
+    Respond ONLY with valid JSON in this exact format:
     [
-        { "title": "...", "url": "...", "bias_score": 0.05 },
-        { "title": "...", "url": "...", "bias_score": 0.10 },
-        { "title": "...", "url": "...", "bias_score": 0.12 }
-    ]`;
+    {
+        "title": "Example Title",
+        "url": "https://example.com",
+        "bias_score": 0.13
+    },
+    ...
+    ]
+
+    Here are the articles:
+    ${listText}
+    `;
+
+
 
     // Ask OpenAI and parse JSON
     const reply = await askOpenAI(prompt);
