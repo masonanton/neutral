@@ -53,7 +53,7 @@ async function askOpenAI(prompt) {
     return clean;
 }
 
-// GET /api/neutral?q=some+question
+// GET /api/neutral?q=topic
 // This endpoint fetches news articles and gets the most neutral ones
 // Example: /api/neutral?q=stock+market
 app.get('/api/neutral', async (req, res) => {
@@ -65,7 +65,7 @@ app.get('/api/neutral', async (req, res) => {
             return res.status(400).json({ error: 'Query parameter "q" is required.' });
         }
 
-        // Fetch news articles related to the query
+        // Fetch up to 20 news articles related to the query
         const newsUrl = `https://newsapi.org/v2/everything?` +
                     `q=${encodeURIComponent(q)}` +
                     `&pageSize=20&sortBy=publishedAt&language=en&apiKey=${NEWS_KEY}`;
@@ -76,39 +76,47 @@ app.get('/api/neutral', async (req, res) => {
       return res.status(404).json({ error: 'No articles found.' });
     }
 
-    // Build a numbered list for the prompt
+    // Build prompt list for OpenAI
     const listText = newsJ.articles
-      .map((a, i) => `Article ${i+1}:\nTitle: ${a.title}\nDesc: ${a.description||''}\nURL: ${a.url}`)
+      .map((a, i) => `Article ${i+1}:
+    Title: ${a.title}
+    Description: ${a.description || '[no description]'}
+    URL: ${a.url}`)
       .join('\n\n');
 
-    // Ask OpenAI to pick & neutralize
-    const prompt = `Here are some news articles about "${q}". Each has a title, description, and URL: ${listText}
+    const prompt = `Here are news articles about "${q}":${listText}
 
-    1) Rate each article for bias on 0 (neutral) to 1 (very biased).  
-    2) Identify the article with the lowest bias score.  
-    3) Rewrite that least-biased article's key details in a neutral, emotion-free style.
+    1) Rate each article for bias on a scale from 0 (completely neutral) to 1 (very biased).
+    2) Identify the THREE articles with the lowest bias scores.
+    3) Return ONLY valid JSON: an array of exactly 3 objects with keys:
+        - "title": string
+        - "url": string
+        - "bias_score": number (0–1)
 
-    Return ONLY valid JSON exactly like:
-    {
-        "title": string,
-        "url":   string,
-        "neutral_summary": string
-    }
-        `;
+    Example:
+    [
+        { "title": "...", "url": "...", "bias_score": 0.05 },
+        { "title": "...", "url": "...", "bias_score": 0.10 },
+        { "title": "...", "url": "...", "bias_score": 0.12 }
+    ]`;
 
+    // Ask OpenAI and parse JSON
     const reply = await askOpenAI(prompt);
 
-    // Parse & return
     let output;
     try {
       output = JSON.parse(reply);
     } catch (err) {
-      return res.status(500).json({ error: 'Failed to parse AI response.', raw: reply });
+      return res.status(500).json({
+        error: 'Failed to parse AI response.',
+        raw:   reply
+      });
     }
 
     res.json(output);
+
   } catch (err) {
-    console.error(err);
+    console.error('Server error:', err);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });
